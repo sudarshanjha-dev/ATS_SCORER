@@ -112,7 +112,8 @@ async def delete_analysis(analysis_id: str, user_id: str) -> bool:
                 }
             )
             response.raise_for_status()
-            return True
+            data=response.json()
+            return len(data)>0
     except Exception as exc:
         logger.error(f"Failed to delete analysis {analysis_id}: {exc}")
         return False
