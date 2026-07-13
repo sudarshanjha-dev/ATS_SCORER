@@ -1,0 +1,32 @@
+FROM python:3.11-slim
+
+# System dependencies:
+# - cairo/pango/gdk-pixbuf/libffi -> required by WeasyPrint for PDF generation
+# - libmagic1 -> required by python-magic for MIME type detection
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libcairo2 \
+    libpango-1.0-0 \
+    libpangoft2-1.0-0 \
+    libpangocairo-1.0-0 \
+    libgdk-pixbuf2.0-0 \
+    libffi-dev \
+    libmagic1 \
+    shared-mime-info \
+    fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Pre-download the spaCy models at build time (not in requirements.txt)
+RUN python -m spacy download en_core_web_md \
+    && python -m spacy download en_core_web_sm
+
+COPY backend/ ./backend/
+
+EXPOSE 8000
+
+# Render/Railway/Fly inject $PORT — fall back to 8000 for local docker run
+CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

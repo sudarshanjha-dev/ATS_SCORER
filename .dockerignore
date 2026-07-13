@@ -1,0 +1,13 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+.env
+.git/
+.gitignore
+frontend/
+jupyter notebooks/
+*.ipynb
+.ipynb_checkpoints/
+.streamlit/
+README.md
