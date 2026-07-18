@@ -13,7 +13,8 @@ class JDComparison(BaseModel):
     semantic_similarity: float
     matched_keywords: List[str]
     missing_keywords: List[str]
-    skills_gap: List[str] 
+    skills_gap: List[str]
+    job_title: str = ""
 
 class SkillValidationDetails(BaseModel):
     validated: List[Dict[str, Any]] = []       # [{'skill': str, 'projects': [str]}]
