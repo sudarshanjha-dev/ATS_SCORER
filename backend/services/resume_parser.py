@@ -1,6 +1,6 @@
 import io
 import magic
-from typing import Tuple, Optional, Tuple
+from typing import Tuple, Optional
 
 import pdfplumber
 from docx import Document
@@ -8,6 +8,7 @@ import PyPDF2
 
 from backend.utils.file_utils import(
     FileParsingError, 
+    FileValidationError,
     TextExtractionError, 
     FileUploadError, 
     log_error, 
@@ -22,12 +23,6 @@ from backend.core.config import (
     SUPPORTED_MIME_TYPES
 )
 
-class FileParsingError(Exception):
-    pass
-
-class FileValidationError(Exception):
-    pass
-
 def validate_file(file_data:bytes, filename:str)->Tuple[bool, str, Optional[str]]:
     file_size_bytes = len(file_data)
     if file_size_bytes > MAX_FILE_SIZE_BYTES:
@@ -38,7 +33,7 @@ def validate_file(file_data:bytes, filename:str)->Tuple[bool, str, Optional[str]
         ), None
     
     if file_size_bytes==0:
-        return False, 'uploade file is empty...please check the file you have uploaded and try again'
+        return False, 'Uploaded file is empty. Please check the file you have uploaded and try again.', None
     
     try:
         mime_type=magic.from_buffer(file_data, mime=True)
