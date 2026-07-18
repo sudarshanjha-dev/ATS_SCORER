@@ -115,6 +115,19 @@ def exchange_code_for_session(auth_code: str) -> Dict[str, Any]:
     try:
         storage_key = f'{client.auth._storage_key}-code-verifier'
         code_verifier = client.auth._storage.get_item(storage_key) or ''
+    except AttributeError as exc:
+        # client.auth._storage_key / ._storage are undocumented supabase-py
+        # internals (there's no public API for retrieving the PKCE code
+        # verifier as of 2.x). A library upgrade can rename these and this
+        # will start failing here specifically — log loudly so it's obvious
+        # this needs a code fix, not a user-facing auth problem.
+        logger.error(
+            f'supabase-py internals changed — PKCE code_verifier lookup failed: {exc}. '
+            'Check client.auth for the current private storage attribute names, '
+            'or pin supabase to the last known-good version in requirements.txt.'
+        )
+        return {'error': 'Google sign-in is temporarily unavailable. Please try email/password sign-in, or contact support.'}
+    try:
         resp = client.auth.exchange_code_for_session({
             'auth_code': auth_code,
             'code_verifier': code_verifier,
