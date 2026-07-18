@@ -4,6 +4,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
 from backend.api.auth import get_current_user
+from backend.core.config import MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB
 from backend.models.schemas import AnalysisResponse, ComponentScores, JDComparison, SkillValidationDetails
 from backend.utils.file_utils import (
     get_default_grammar_results,
@@ -11,14 +12,30 @@ from backend.utils.file_utils import (
     get_default_skill_validation_results,
 )
 
+_UPLOAD_CHUNK_SIZE = 1024 * 1024  # 1 MB
+
+
+async def _read_upload_capped(resume: UploadFile) -> bytes:
+    """Read an UploadFile in chunks, aborting as soon as MAX_FILE_SIZE_BYTES is
+    exceeded instead of buffering an unbounded upload fully into memory first."""
+    chunks = []
+    total = 0
+    while True:
+        chunk = await resume.read(_UPLOAD_CHUNK_SIZE)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_FILE_SIZE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f'File exceeds the maximum allowed size of {MAX_FILE_SIZE_MB} MB.',
+            )
+        chunks.append(chunk)
+    return b''.join(chunks)
+
 logger = logging.getLogger('ats_resume_scorer')
 
 router = APIRouter(prefix='/api/v1', tags=['Analysis'])
-
-def _clean(text: str) -> str:
-    for prefix in ('✅', '🌟', '❌', '⚠️', '📝', '🔴', '🟡', '🟢', '🟠', '👍'):
-        text = text.lstrip(prefix)
-    return text.strip()
 
 @router.post('/analyze-resume', response_model=AnalysisResponse)
 async def analyze_resume(
@@ -35,7 +52,7 @@ async def analyze_resume(
 
 
     try:
-        file_bytes = await resume.read()
+        file_bytes = await _read_upload_capped(resume)
         filename   = resume.filename or 'resume'
 
         from backend.services.resume_parser import (
@@ -47,6 +64,9 @@ async def analyze_resume(
         resume_text, _metadata = parse_resume_file(file_bytes, filename)
         logger.info(f"Parsed '{filename}': {len(resume_text)} chars extracted")
 
+    except HTTPException:
+        raise
+
     except Exception as exc:
         logger.error(f'File parsing failed: {exc}')
         raise HTTPException(
@@ -54,15 +74,20 @@ async def analyze_resume(
             detail=f'Could not read or parse the resume: {exc}',
         )
 
-    #Full Analysis Pipeline 
+    #Full Analysis Pipeline
     try:
+        from fastapi.concurrency import run_in_threadpool
         from backend.services.resume_analyzer import analyze_full_resume
-        
-        result = analyze_full_resume(
+
+        # analyze_full_resume is synchronous and makes blocking Groq HTTP calls;
+        # running it directly here would block the event loop for every other
+        # concurrent request. run_in_threadpool offloads it to a worker thread.
+        result = await run_in_threadpool(
+            analyze_full_resume,
             resume_text=resume_text,
             nlp=nlp,
             embedder=embedder,
-            job_description=job_description
+            job_description=job_description,
         )
     except Exception as exc:
         logger.error(f'Full analysis pipeline failed: {exc}')
@@ -79,6 +104,7 @@ async def analyze_resume(
             matched_keywords=result['jd_comparison'].get('matched_keywords', [])[:20],
             missing_keywords=result['jd_comparison'].get('missing_keywords', [])[:15],
             skills_gap=result['jd_comparison'].get('skills_gap', [])[:10],
+            job_title=result['jd_comparison'].get('job_title', ''),
         )
 
     # Convert detailed_feedback objects from prediction into what schema expects
