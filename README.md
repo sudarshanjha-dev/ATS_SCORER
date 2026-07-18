@@ -22,12 +22,12 @@ A web app that scores how well a resume matches a job description and returns ac
 
 ```
 ATS_SCORER/
-├── backend/              FastAPI app, NLP services, API routes
-├── frontend/             Streamlit app, views, components
-├── jupyter notebooks/    Research and dataset prep (not used at runtime)
-├── ml model/             Exported ML artifacts
-├── requirements.txt      Combined backend + frontend dependencies
-└── .env.example          Template for environment variables
+├── backend/                              FastAPI app, NLP services, API routes
+├── frontend/                             Streamlit app, views, components
+│   └── .streamlit/secrets.toml.example   Template for frontend secrets
+├── jupyter notebooks/                    Research and dataset prep (not used at runtime)
+├── requirements.txt                      Combined backend + frontend dependencies
+└── .env.example                          Template for backend environment variables
 ```
 
 ## Setup
@@ -69,8 +69,9 @@ cp .env.example .env
 You need:
 
 - A **Supabase** project — grab `SUPABASE_URL`, `SUPABASE_KEY` (service role), and `SUPABASE_ANON_KEY` from Project Settings → API.
-- A **Groq** API key from [console.groq.com](https://console.groq.com).
+- A **Groq** API key from [console.groq.com](https://console.groq.com) — **required**, see note below.
 - (Optional) Google OAuth set up in the Supabase dashboard if you want Google sign-in.
+- Set `ALLOWED_ORIGINS` in `.env` to a comma-separated list of frontend origins allowed to call the backend (defaults to `http://localhost:8501` for local dev). Add your deployed Streamlit URL here when going to production.
 
 The Streamlit frontend also reads Supabase config from `frontend/.streamlit/secrets.toml`. Copy `secrets.toml.example` to `secrets.toml` and fill it in.
 
@@ -94,9 +95,24 @@ streamlit run frontend/streamlit_app.py
 
 The app opens at `http://localhost:8501`.
 
+## Deployment
+
+Backend and frontend are two separate services — there is intentionally no single "deploy everything" step.
+
+- **Backend (FastAPI):** deploy using the included `DockerFile` to any container platform (Render, Railway, Fly.io, etc). It only packages `backend/`. Set `GROQ_API_KEY`, `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_ANON_KEY`, `SUPABASE_JWT_SECRET`, and `ALLOWED_ORIGINS` (comma-separated, including your frontend's deployed URL) as environment variables on the platform. The container reads `$PORT` if set, falling back to 8000.
+- **Frontend (Streamlit):** deploy separately. Either:
+  - **Streamlit Community Cloud** — point it at `frontend/streamlit_app.py`, no Docker needed; or
+  - **Any container platform** — use `frontend/Dockerfile`, which packages `frontend/` standalone (it has no dependency on `backend/`). It also reads `$PORT`, falling back to 8501.
+
+  Either way, set `backend.url` in that platform's secrets (or `frontend/.streamlit/secrets.toml`) to your deployed backend's URL, plus the `[supabase]` and `[google_oauth]` values from `secrets.toml.example`.
+- Update the backend's `ALLOWED_ORIGINS` whenever the frontend's URL changes, or requests from the frontend will fail CORS.
+- **No rate limiting yet.** `/api/v1/analyze-resume` calls the paid Groq API on every request with no throttling. Before a public deploy, add rate limiting at the edge (e.g. your platform's built-in limits, or a reverse proxy) rather than an in-process limiter — an in-memory limiter only works with a single worker process and silently stops protecting you the moment you scale to multiple uvicorn workers or instances.
+
 ## Notes for students
 
 - **Never commit `.env` or `secrets.toml`** — they hold API keys. Both are in `.gitignore`; check before you push.
 - The first run downloads the Sentence Transformer model (~80 MB). It's cached afterwards.
-- If you don't have a Groq key yet, the scoring still works — only the LLM suggestions section will be empty.
-- `jupyter notebooks/` and `ml model/` are for experimentation and aren't required to run the app.
+- **`GROQ_API_KEY` is required, not optional.** Resume parsing (skills, experience, keywords) runs through the Groq LLM before any scoring happens — without a key, `/api/v1/analyze-resume` will fail with a 500 error, not just a missing "suggestions" section.
+- `jupyter notebooks/` is for experimentation and isn't required to run the app.
+
+- 
