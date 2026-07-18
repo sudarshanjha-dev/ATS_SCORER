@@ -64,6 +64,7 @@ def analyze_full_resume(
             embedder=embedder,
             nlp=nlp,
         )
+        jd_comparison_result['job_title'] = parsed_jd.get('job_title', '')
 
     from backend.utils.file_utils import (
         get_default_grammar_results, get_default_location_results,
