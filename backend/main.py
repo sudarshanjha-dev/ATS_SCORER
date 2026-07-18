@@ -3,6 +3,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+# Explicitly configures handlers on the 'ats_resume_scorer' logger. Imported
+# first and by name so logging is guaranteed to be set up before anything
+# else in the app logs, rather than depending on import order elsewhere.
+import backend.utils.file_utils  # noqa: F401
+
 from backend.core.config import(
     ALLOWED_ORIGINS, 
     APP_DESCRIPTION, 
