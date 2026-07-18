@@ -2,7 +2,7 @@ import re
 import spacy
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from backend.utils.file_utils import log_warning
 from backend.core.config import SENTENCE_TRANSFORMER_MODEL
@@ -72,32 +72,15 @@ def detect_location_info(text: str, nlp: spacy.Language) -> Dict:
         'penalty_applied':    penalty,
     }
 
-def _calculate_semantic_similarity(skill: str, text: str, embedder: SentenceTransformer) -> float:
-    #similarity = (A · B) / (|A| × |B|)
-    if not skill or not text:
-        return 0.0
-    try:
-        skill_vec  = embedder.encode(skill, convert_to_tensor=False)
-        text_vec   = embedder.encode(text,  convert_to_tensor=False)
-
-        similarity = np.dot(skill_vec, text_vec) / (
-            np.linalg.norm(skill_vec) * np.linalg.norm(text_vec)
-        )
-
-        return float(max(0.0, min(1.0, similarity)))
-    except Exception as e:
-        log_warning(f"Similarity error for '{skill}': {e}", context='ats_scorer')
-        return 0.0
-
-def _skill_matches(skill: str, text: str, embedder: SentenceTransformer, threshold: float) -> Tuple[bool, float]:
-
-    #fast, o(n) directly check if skill is a substring of the text (case-insensitive)
-    if skill.lower() in text.lower():
-        return True, 1.0
-    
-    #slow, semantic similarity check using sentence embeddings
-    sim = _calculate_semantic_similarity(skill, text, embedder)
-    return sim >= threshold, sim
+def _batch_encode(texts: List[str], embedder: SentenceTransformer) -> np.ndarray:
+    """Encode many texts in a single model call and L2-normalize the rows so a
+    plain dot product gives cosine similarity. Returns an (n, dim) array."""
+    if not texts:
+        return np.zeros((0, 0))
+    vecs = np.asarray(embedder.encode(texts, convert_to_tensor=False))
+    norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0  # avoid div-by-zero for empty-string embeddings
+    return vecs / norms
 
 #Skill validation
 def validate_skills_with_projects(
@@ -107,7 +90,7 @@ def validate_skills_with_projects(
     embedder: SentenceTransformer,
     threshold: float = 0.6,
 ) -> Dict:
-    
+
     if not skills:
         return {
             'validated_skills':      [],
@@ -123,27 +106,50 @@ def validate_skills_with_projects(
         if isinstance(e, dict)
     ).strip()
 
+    # Build the list of reference texts once: one per project, plus experience last (if present)
+    project_titles = [p.get('title', 'Untitled Project') for p in projects]
+    reference_texts = [
+        f"{p.get('title', '')} {p.get('description', '')}" for p in projects
+    ]
+    has_experience = bool(experience_text)
+    if has_experience:
+        reference_texts.append(experience_text)
+        project_titles.append('Experience Section')
+
+    try:
+        # Two batched calls total, regardless of how many skills/projects there are,
+        # instead of one embedder.encode() call per skill-project pair.
+        skill_vecs = _batch_encode(skills, embedder)
+        ref_vecs   = _batch_encode(reference_texts, embedder) if reference_texts else np.zeros((0, 0))
+        # similarity_matrix[i, j] = cosine similarity between skills[i] and reference_texts[j]
+        if skill_vecs.size and ref_vecs.size:
+            similarity_matrix = np.clip(skill_vecs @ ref_vecs.T, 0.0, 1.0)
+        else:
+            similarity_matrix = np.zeros((len(skills), len(reference_texts)))
+    except Exception as e:
+        log_warning(f"Batch similarity computation failed: {e}", context='ats_scorer')
+        similarity_matrix = np.zeros((len(skills), len(reference_texts)))
+
     validated_skills      = []
     unvalidated_skills    = []
     skill_project_mapping = {}
 
-    for skill in skills:
+    for i, skill in enumerate(skills):
         matching_projects = []
         max_similarity    = 0.0
+        skill_lower       = skill.lower()
 
-        for project in projects:
-            project_text = f"{project.get('title', '')} {project.get('description', '')}"
-            matched, sim = _skill_matches(skill, project_text, embedder, threshold)
+        for j, ref_text in enumerate(reference_texts):
+            # Fast path: exact substring match short-circuits the embedding similarity
+            if skill_lower in ref_text.lower():
+                matched, sim = True, 1.0
+            else:
+                sim = float(similarity_matrix[i, j]) if similarity_matrix.size else 0.0
+                matched = sim >= threshold
+
             max_similarity = max(max_similarity, sim)
-
             if matched:
-                matching_projects.append(project.get('title', 'Untitled Project'))
-
-        if experience_text:
-            matched, sim = _skill_matches(skill, experience_text, embedder, threshold)
-            max_similarity = max(max_similarity, sim)
-            if matched and 'Experience Section' not in matching_projects:
-                matching_projects.append('Experience Section')
+                matching_projects.append(project_titles[j])
 
         if matching_projects:
             validated_skills.append({'skill': skill, 'projects': matching_projects, 'similarity': max_similarity})
@@ -460,3 +466,4 @@ def _generate_score_interpretation(overall_score: float) -> str:
     elif overall_score >= 60:  return 'Fair. Your resume needs some improvements to be fully ATS-compatible.'
     elif overall_score >= 50:  return 'Below Average. Significant improvements needed for ATS compatibility.'
     else:                      return 'Poor. Your resume requires major revisions to pass ATS screening.'
+        
