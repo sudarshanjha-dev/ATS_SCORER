@@ -3,27 +3,33 @@ import sys
 import os
 from typing import Any, Callable, Dict, Optional, Tuple, TypeVar
 
-LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs')
-os.makedirs(LOG_DIR, exist_ok=True)
-
 logger = logging.getLogger('ats_resume_scorer')
 logger.setLevel(logging.INFO)
 
-# Simplified file handler - only basic logs
-file_handler = logging.FileHandler(os.path.join(LOG_DIR, "ats_scorer.log"))
-file_handler.setLevel(logging.INFO)
-file_handler.setFormatter(logging.Formatter(
-    '%(asctime)s - %(levelname)s - %(message)s'
-))
-
-# Simplified console handler
+# Console handler — this is what platforms like Render/Railway/Fly capture as
+# your app's logs, so it's on by default and set to INFO (not WARNING) so
+# routine operational logs (e.g. "Parsed 'resume.pdf': N chars extracted")
+# actually show up.
 console_handler = logging.StreamHandler(sys.stdout)
-console_handler.setLevel(logging.WARNING)
+console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
 
 if not logger.handlers:
-    logger.addHandler(file_handler)
     logger.addHandler(console_handler)
+
+# Optional file logging — off by default. Most container platforms have an
+# ephemeral or read-only filesystem outside of specific paths, so writing a
+# log file at import time can fail deployment entirely. Opt in locally with
+# ATS_FILE_LOGGING=1 if you want a log file on disk during development.
+if os.getenv('ATS_FILE_LOGGING', '').lower() in ('1', 'true', 'yes'):
+    LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs')
+    os.makedirs(LOG_DIR, exist_ok=True)
+    file_handler = logging.FileHandler(os.path.join(LOG_DIR, "ats_scorer.log"))
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s'
+    ))
+    logger.addHandler(file_handler)
 
 class ATSBaseError(Exception):
     """Simple base class for ATS errors."""
@@ -33,6 +39,9 @@ class ATSBaseError(Exception):
         self.user_message = user_message or 'An error occurred. Please try again.'
 
 class FileUploadError(ATSBaseError):
+    pass
+
+class FileValidationError(ATSBaseError):
     pass
 
 class FileParsingError(ATSBaseError):
