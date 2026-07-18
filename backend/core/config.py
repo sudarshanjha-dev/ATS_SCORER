@@ -14,9 +14,12 @@ APP_TITLE='ATS RESUME ANALYZER API'
 APP_VERSION='1.0.0'
 APP_DESCRIPTION='analyse resumes against job description using nlp + ml'
 
+_DEFAULT_ORIGINS = 'http://localhost:8501,http://127.0.0.1:8501'
 ALLOWED_ORIGINS = [
-    'https://appapppy-ktwxupi73vqhjzweksze9d.streamlit.app'
-]  
+    origin.strip()
+    for origin in os.getenv('ALLOWED_ORIGINS', _DEFAULT_ORIGINS).split(',')
+    if origin.strip()
+]
 
 #file 
 MAX_FILE_SIZE_MB=5
@@ -49,4 +52,3 @@ SUPABASE_KEY       = os.getenv('SUPABASE_KEY', '')          # service_role — D
 SUPABASE_ANON_KEY  = os.getenv('SUPABASE_ANON_KEY', '')     # public anon — frontend auth calls
 SUPABASE_JWT_SECRET= os.getenv('SUPABASE_JWT_SECRET', '')   # used by backend to verify access tokens
 GROQ_API_KEY       = os.getenv('GROQ_API_KEY', '')
-
